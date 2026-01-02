@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>V-Reflex 3.0: Tactical</title>
+    <style>
+        body {
+            margin: 0; overflow: hidden;
+            background-color: #0f1923;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            cursor: default; user-select: none;
+        }
+        /* Arayüz */
+        #ui-layer {
+            display: none; position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10;
+        }
+        .hud-panel {
+            position: absolute; padding: 10px 20px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transform: skewX(-10deg);
+        }
+        /* Sol Üst */
+        #stats-panel { top: 20px; left: 20px; }
+        .stat-row { font-size: 24px; font-weight: bold; margin-bottom: 5px; transform: skewX(10deg); }
+        
+        /* Sağ Alt */
+        #ammo-panel { bottom: 30px; right: 40px; text-align: right; border-right: 5px solid #ff4655; }
+        #ammo-count { font-size: 48px; font-weight: 900; color: white; transform: skewX(10deg); }
+        .ammo-label { font-size: 14px; color: #aaa; transform: skewX(10deg); text-transform: uppercase; }
+
+        /* Crosshair (Dinamik) */
+        #crosshair {
+            display: none; position: absolute;
+            width: 0; height: 0; pointer-events: none; z-index: 20;
+            transform: translate(-50%, -50%);
+            transition: width 0.1s, height 0.1s; /* Recoil animasyonu */
+        }
+        /* Merkez Nokta */
+        #crosshair::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px; background: #00ff00;
+            transform: translate(-50%, -50%); border-radius: 50%;
+            box-shadow: 0 0 2px black;
+        }
+        /* Çizgiler */
+        .ch-line {
+            position: absolute; background: #00ff00;
+            transition: all 0.05s ease-out; /* Tepme hızı */
+        }
+        
+        /* Menüler */
+        .overlay-screen {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(15, 25, 35, 0.98);
+            padding: 50px; text-align: center;
+            border: 2px solid #ff4655;
+            z-index: 30; min-width: 350px;
+            box-shadow: 0 0 50px rgba(255, 70, 85, 0.2);
+        }
+        button {
+            background-color: #ff4655; color: white; border: none;
+            padding: 15px 40px; font-size: 20px; font-weight: bold;
+            cursor: pointer; text-transform: uppercase; margin-top: 20px;
+            clip-path: polygon(10% 0, 100% 0, 100% 80%, 90% 100%, 0 100%, 0 20%);
+        }
+        button:hover { background-color: #d13644; }
+
+        /* Kill Banner (Kafa Vuruşu Efekti) */
+        #kill-feed {
+            position: absolute; top: 20%; left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center; pointer-events: none;
+        }
+        .kill-msg {
+            font-size: 30px; font-weight: 900; color: #ff4655;
+            text-shadow: 0 0 10px black;
+            animation: popUp 0.5s forwards;
+        }
+        @keyframes popUp {
+            0% { transform: scale(0.5); opacity: 0; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+
+        #game-over { display: none; }
+        #reload-bar-container {
+            display: none; position: absolute; top: 60%; left: 50%;
+            transform: translate(-50%, -50%); width: 100px; height: 6px;
+            background: #333;
+        }
+        #reload-bar { width: 0%; height: 100%; background: white; }
+    </style>
+</head>
+<body>
+
+    <div id="crosshair">
+        <div class="ch-line" id="ch-top" style="width: 2px; height: 10px; top: -14px; left: -1px;"></div>
+        <div class="ch-line" id="ch-bottom" style="width: 2px; height: 10px; bottom: -14px; left: -1px;"></div>
+        <div class="ch-line" id="ch-left" style="width: 10px; height: 2px; left: -14px; top: -1px;"></div>
+        <div class="ch-line" id="ch-right" style="width: 10px; height: 2px; right: -14px; top: -1px;"></div>
+    </div>
+
+    <div id="start-screen" class="overlay-screen">
+        <h1 style="color: #ff4655; font-size: 40px; margin: 0;">V-REFLEX TACTICAL</h1>
+        <p style="color: #ccc; margin-top: 10px;">Hedef: Düşman Ajanları</p>
+        <div style="text-align: left; margin: 20px auto; width: fit-content; color: #aaa; font-size: 14px;">
+            <p>🎯 <strong>KAFA:</strong> TEK MERMİ (ÖLDÜRÜR)</p>
+            <p>👕 <strong>GÖVDE:</strong> 4 MERMİ</p>
+            <p>🔄 <strong>R:</strong> ŞARJÖR DEĞİŞTİR</p>
+        </div>
+        <button onclick="initGame()">BAŞLA</button>
+    </div>
+
+    <div id="ui-layer">
+        <div id="stats-panel" class="hud-panel">
+            <div class="stat-row" style="color: #ff4655;">SKOR: <span id="score">0</span></div>
+            <div class="stat-row" style="color: #00e5ff;">CAN: <span id="health">100</span></div>
+        </div>
+        <div id="kill-feed"></div>
+        <div id="ammo-panel" class="hud-panel">
+            <div id="ammo-count">25</div>
+            <div class="ammo-label">VANDAL // <span id="reload-msg" style="display:none; color:yellow;">(R)</span></div>
+        </div>
+        <div id="reload-bar-container"><div id="reload-bar"></div></div>
+    </div>
+
+    <div id="game-over" class="overlay-screen">
+        <h1 style="color: white;">GÖREV BAŞARISIZ</h1>
+        <p style="font-size: 20px; color: #ff4655;">Toplam Skor: <span id="final-score">0</span></p>
+        <button onclick="restartGame()">TEKRAR DENE</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const crosshair = document.getElementById('crosshair');
+        const killFeed = document.getElementById('kill-feed');
+        
+        let audioCtx;
+        
+        // Oyun Ayarları
+        let score = 0;
+        let playerHealth = 100;
+        let enemies = [];
+        let particles = [];
+        let gameRunning = false;
+        let spawnRate = 1200;
+        let lastSpawn = 0;
+
+        // Silah Ayarları
+        const MAX_AMMO = 25;
+        let currentAmmo = MAX_AMMO;
+        let isReloading = false;
+        let recoil = 0; // Crosshair açılması
+
+        // Ekran Boyutu
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Mouse
+        let mouseX = 0, mouseY = 0;
+        document.addEventListener('mousemove', (e) => {
+            if(gameRunning) {
+                crosshair.style.left = e.clientX + 'px';
+                crosshair.style.top = e.clientY + 'px';
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            }
+        });
+
+        // --- SES SİSTEMİ ---
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            const now = audioCtx.currentTime;
+
+            if (type === 'shoot') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(100, now);
+                osc.frequency.exponentialRampToValueAtTime(0.01, now + 0.1);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1);
+            } else if (type === 'headshot') {
+                // Çınlama sesi
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.linearRampToValueAtTime(1200, now + 0.1);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3);
+            } else if (type === 'bodyshot') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(100, now);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                osc.start(now); osc.stop(now + 0.05);
+            } else if (type === 'reload') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, now);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.5);
+                osc.start(now); osc.stop(now + 0.5);
+            }
+        }
+
+        // --- ATEŞ ETME VE RECOIL ---
+        document.addEventListener('mousedown', () => {
+            if (!gameRunning || isReloading) return;
+
+            if (currentAmmo <= 0) {
+                document.getElementById('reload-msg').style.display = 'inline';
+                return;
+            }
+
+            currentAmmo--;
+            updateAmmoUI();
+            playSound('shoot');
+
+            // Recoil: Crosshair açılır
+            recoil = 15; 
+            applyRecoilVisuals();
+
+            // Vuruş Kontrolü
+            let hit = false;
+            // Tersten döngü (en üstteki düşman önce vurulur)
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                // Kafa Vuruşu Kontrolü
+                const distHead = Math.hypot(mouseX - enemy.headX, mouseY - enemy.headY);
+                
+                // Gövde Vuruşu Kontrolü (Basit Dikdörtgen mantığı)
+                const inBodyX = mouseX > enemy.x - enemy.width/2 && mouseX < enemy.x + enemy.width/2;
+                const inBodyY = mouseY > enemy.y && mouseY < enemy.y + enemy.height;
+
+                if (distHead < enemy.headRadius) {
+                    // HEADSHOT!
+                    playSound('headshot');
+                    killEnemy(i, true, enemy.x, enemy.headY);
+                    hit = true;
+                    break;
+                } else if (inBodyX && inBodyY) {
+                    // BODYSHOT
+                    playSound('bodyshot');
+                    damageEnemy(enemy, i);
+                    createExplosion(mouseX, mouseY, '#ccc', 3); // Kan/Toz efekti
+                    hit = true;
+                    break;
+                }
+            }
+            
+            if (!hit) {
+                // Duvar vuruş efekti
+                createExplosion(mouseX, mouseY, '#333', 2); 
+            }
+        });
+
+        // Recoil Toparlanması
+        function applyRecoilVisuals() {
+            const top = document.getElementById('ch-top');
+            const bottom = document.getElementById('ch-bottom');
+            const left = document.getElementById('ch-left');
+            const right = document.getElementById('ch-right');
+            
+            // Çizgileri it
+            top.style.top = -(14 + recoil) + 'px';
+            bottom.style.bottom = -(14 + recoil) + 'px';
+            left.style.left = -(14 + recoil) + 'px';
+            right.style.right = -(14 + recoil) + 'px';
+        }
+
+        setInterval(() => {
+            if(recoil > 0) {
+                recoil -= 2; // Crosshair zamanla toparlar
+                if(recoil < 0) recoil = 0;
+                applyRecoilVisuals();
+            }
+        }, 16);
+
+        // --- DÜŞMAN MANTIĞI ---
+        class Enemy {
+            constructor() {
+                this.width = 40;
+                this.height = 60;
+                this.headRadius = 12;
+                
+                // Güvenli alan içinde doğ
+                this.x = Math.random() * (canvas.width - 100) + 50;
+                this.y = Math.random() * (canvas.height - 150) + 50;
+                
+                this.headX = this.x;
+                this.headY = this.y - this.headRadius - 5;
+                
+                this.hp = 100;
+                this.maxTime = 300; // Ömür
+                this.timer = this.maxTime;
+                this.color = '#ff4655'; // Düşman Kırmızısı
+            }
+
+            update() {
+                this.timer--;
+                if (this.timer <= 0) return false; // Süresi doldu
+                return true;
+            }
+
+            draw() {
+                // Opaklık (Süre azalınca soluklaşır)
+                ctx.globalAlpha = this.timer / this.maxTime;
+
+                // Gövde (Trapezoid gibi)
+                ctx.fillStyle = '#2c2c2c'; // Koyu kıyafet
+                ctx.beginPath();
+                ctx.moveTo(this.x - this.width/2 + 5, this.y); // Sol omuz
+                ctx.lineTo(this.x + this.width/2 - 5, this.y); // Sağ omuz
+                ctx.lineTo(this.x + this.width/2, this.y + this.height); // Sağ alt
+                ctx.lineTo(this.x - this.width/2, this.y + this.height); // Sol alt
+                ctx.closePath();
+                ctx.fill();
+                
+                // Dış Çizgi (Highlight - Reyna Ultisi gibi)
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Kafa
+                ctx.beginPath();
+                ctx.arc(this.headX, this.headY, this.headRadius, 0, Math.PI * 2);
+                ctx.fillStyle = '#2c2c2c';
+                ctx.fill();
+                ctx.stroke();
+
+                // Can Barı (Kafanın üstünde)
+                if (this.hp < 100) {
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(this.x - 20, this.headY - 25, 40 * (this.hp/100), 4);
+                }
+
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function damageEnemy(enemy, index) {
+            enemy.hp -= 34; // 3 mermide ölür (Vandal Body)
+            if (enemy.hp <= 0) {
+                killEnemy(index, false, enemy.x, enemy.y + 20);
+            }
+        }
+
+        function killEnemy(index, isHeadshot, x, y) {
+            enemies.splice(index, 1);
+            
+            if (isHeadshot) {
+                score += 150;
+                createFloatingText("HEADSHOT", x, y, '#ffeb3b'); // Sarı yazı
+                createExplosion(x, y, '#ffeb3b', 15);
+            } else {
+                score += 50;
+                createFloatingText("+50", x, y, 'white');
+                createExplosion(x, y, '#ff4655', 8);
+            }
+            
+            document.getElementById('score').innerText = score;
+
+            // Kill Feed Göster
+            const msg = document.createElement('div');
+            msg.className = 'kill-msg';
+            msg.innerText = isHeadshot ? "☠" : "x";
+            killFeed.appendChild(msg);
+            setTimeout(() => msg.remove(), 500);
+
+            // Zorluk Artışı
+            if (score % 500 === 0 && spawnRate > 500) spawnRate -= 100;
+        }
+
+        // --- KLAVYE ---
+        document.addEventListener('keydown', (e) => {
+            if (!gameRunning) return;
+            if ((e.key === 'r' || e.key === 'R') && !isReloading && currentAmmo < MAX_AMMO) {
+                startReload();
+            }
+        });
+
+        function startReload() {
+            isReloading = true;
+            playSound('reload');
+            document.getElementById('reload-msg').style.display = 'none';
+            document.getElementById('reload-bar-container').style.display = 'block';
+            
+            const bar = document.getElementById('reload-bar');
+            bar.style.width = '0%';
+            bar.style.transition = 'width 1s linear';
+            setTimeout(() => bar.style.width = '100%', 10);
+
+            setTimeout(() => {
+                currentAmmo = MAX_AMMO;
+                updateAmmoUI();
+                isReloading = false;
+                document.getElementById('reload-bar-container').style.display = 'none';
+                bar.style.transition = 'none';
+            }, 1000);
+        }
+
+        function updateAmmoUI() {
+            document.getElementById('ammo-count').innerText = currentAmmo;
+            document.getElementById('ammo-count').style.color = currentAmmo <= 5 ? 'red' : 'white';
+        }
+
+        function createFloatingText(text, x, y, color) {
+            // Basit bir çizim yerine DOM elementi de kullanabilirdik ama Canvas'ta çizelim
+            // veya basitlik için DOM kullanalım. Kill Feed zaten DOM.
+        }
+
+        // --- PARÇACIK EFEKTLERİ ---
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x; this.y = y; this.color = color;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 5 + 2;
+                this.velX = Math.cos(angle) * speed;
+                this.velY = Math.sin(angle) * speed;
+                this.life = 1.0;
+            }
+            update() {
+                this.x += this.velX;
+                this.y += this.velY;
+                this.life -= 0.05;
+            }
+            draw() {
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.rect(this.x, this.y, 4, 4);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        function createExplosion(x, y, color, count) {
+            for(let i=0; i<count; i++) particles.push(new Particle(x, y, color));
+        }
+
+        // --- OYUN DÖNGÜSÜ ---
+        function initGame() {
+            initAudio();
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('ui-layer').style.display = 'block';
+            document.getElementById('crosshair').style.display = 'block';
+            document.body.style.cursor = 'none';
+            startGameLogic();
+        }
+
+        function restartGame() {
+            document.getElementById('game-over').style.display = 'none';
+            document.body.style.cursor = 'none';
+            startGameLogic();
+        }
+
+        function startGameLogic() {
+            score = 0; playerHealth = 100;
+            currentAmmo = MAX_AMMO; enemies = []; particles = [];
+            spawnRate = 1200; lastSpawn = performance.now();
+            gameRunning = true;
+            document.getElementById('score').innerText = score;
+            document.getElementById('health').innerText = playerHealth;
+            updateAmmoUI();
+            requestAnimationFrame(animate);
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('game-over').style.display = 'block';
+            document.body.style.cursor = 'default';
+        }
+
+        function animate(currentTime) {
+            if (!gameRunning) return;
+            requestAnimationFrame(animate);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Spawn
+            if (currentTime - lastSpawn > spawnRate) {
+                enemies.push(new Enemy());
+                lastSpawn = currentTime;
+            }
+
+            // Düşmanlar
+            enemies.forEach((enemy, index) => {
+                const alive = enemy.update();
+                if (!alive) {
+                    enemies.splice(index, 1);
+                    playerHealth -= 20; // Düşman kaçarsa can gider
+                    document.getElementById('health').innerText = playerHealth;
+                    if (playerHealth <= 0) gameOver();
+                } else {
+                    enemy.draw();
+                }
+            });
+
+            // Parçacıklar
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                if (particles[i].life <= 0) particles.splice(i, 1);
+            }
+        }
+    </script>
+</body>
+</html>
